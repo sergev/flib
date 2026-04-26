@@ -1,9 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -561,4 +563,165 @@ INSERT INTO book_janre(id_book, id_janre, id_lib) VALUES (1, 100, 1);
 	if !strings.Contains(buf.String(), "=== Genre: Научная фантастика") {
 		t.Fatalf("unexpected output: %s", buf.String())
 	}
+}
+
+func TestParseExtractArgs(t *testing.T) {
+	dest, err := parseExtractArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dest != "." {
+		t.Fatalf("got %q", dest)
+	}
+	dest, err = parseExtractArgs([]string{"--destdir", "out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dest != "out" {
+		t.Fatalf("got %q", dest)
+	}
+	if _, err := parseExtractArgs([]string{"--destdir"}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := parseExtractArgs([]string{"--bad"}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSanitizePathPartAndUniqueRelPath(t *testing.T) {
+	if got := sanitizePathPart("  "); got != "(unknown)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := sanitizePathPart("a/b\\c"); got != "a_b_c" {
+		t.Fatalf("got %q", got)
+	}
+	seen := map[string]int{}
+	first := uniqueRelPath("en/Ann/Same.fb2", 1, seen)
+	second := uniqueRelPath("en/Ann/Same.fb2", 2, seen)
+	third := uniqueRelPath("en/Ann/Same.fb2", 2, seen)
+	if first != "en/Ann/Same.fb2" {
+		t.Fatalf("first %q", first)
+	}
+	if second != "en/Ann/Same-2.fb2" {
+		t.Fatalf("second %q", second)
+	}
+	if third != "en/Ann/Same-2-2.fb2" {
+		t.Fatalf("third %q", third)
+	}
+}
+
+func TestCmdExtractIntegrationOverwriteAndCollision(t *testing.T) {
+	tmp := t.TempDir()
+	libRoot := filepath.Join(tmp, "lib")
+	if err := os.MkdirAll(libRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(libRoot, "batch.zip")
+	if err := createZipFile(archivePath, map[string]string{
+		"f1.fb2": "content-one",
+		"f2.fb2": "content-two",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(tmp, "extract.sqlite")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE lib (id INTEGER PRIMARY KEY, name TEXT, path TEXT);
+CREATE TABLE author (id INTEGER, name1 TEXT, name2 TEXT, name3 TEXT, id_lib INTEGER, PRIMARY KEY(id));
+CREATE TABLE book_author (id_book INTEGER, id_author INTEGER, id_lib INTEGER, PRIMARY KEY(id_book, id_author, id_lib));
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  star INTEGER,
+  language TEXT,
+  id_lib INTEGER,
+  file TEXT,
+  size INTEGER,
+  deleted BOOL,
+  date DATETIME,
+  format TEXT,
+  keys TEXT,
+  id_inlib INTEGER,
+  archive TEXT,
+  first_author_id INTEGER
+);
+INSERT INTO lib(id, name, path) VALUES (1, 'L1', '/lib');
+INSERT INTO author(id, name1, name2, name3, id_lib) VALUES (10, 'Doe', 'Jane', '', 1);
+INSERT INTO book(id, name, star, language, id_lib, file, size, deleted, date, format, keys, id_inlib, archive, first_author_id) VALUES
+  (1, 'Same', 0, 'en', 1, 'f1', 0, 0, '', 'fb2', '', 1, 'batch.zip', 10),
+  (2, 'Same', 0, 'en', 1, 'f2', 0, 0, '', 'fb2', '', 2, 'batch.zip', 10);
+INSERT INTO book_author(id_book, id_author, id_lib) VALUES (1, 10, 1), (2, 10, 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	dbRO, err := openSQLite(dbPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbRO.Close()
+
+	dest := filepath.Join(tmp, "out")
+	if err := os.MkdirAll(filepath.Join(dest, "en", "Doe Jane"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Precreate destination to validate overwrite behavior.
+	pre := filepath.Join(dest, "en", "Doe Jane", "Same.fb2")
+	if err := os.WriteFile(pre, []byte("old-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("FLIB_PATH", libRoot)
+	var progress bytes.Buffer
+	if err := cmdExtractWithIO(dbRO, &progress, []string{"--destdir", dest}); err != nil {
+		t.Fatal(err)
+	}
+
+	b1, err := os.ReadFile(filepath.Join(dest, "en", "Doe Jane", "Same.fb2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b1) != "content-one" {
+		t.Fatalf("overwrite failed: %q", string(b1))
+	}
+	b2, err := os.ReadFile(filepath.Join(dest, "en", "Doe Jane", "Same-2.fb2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b2) != "content-two" {
+		t.Fatalf("suffix extract failed: %q", string(b2))
+	}
+
+	p := progress.String()
+	if !strings.Contains(p, "en/Doe Jane/Same.fb2") || !strings.Contains(p, "en/Doe Jane/Same-2.fb2") {
+		t.Fatalf("unexpected progress: %q", p)
+	}
+}
+
+func createZipFile(path string, files map[string]string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, content); err != nil {
+			return err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	return f.Close()
 }

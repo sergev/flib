@@ -7,12 +7,13 @@
 Primary user-facing commands:
 
 - `flib show PATTERN [--max NUM]`: case-insensitive Go regexp search over `book.name`; emits a YAML array to stdout and progress to stderr. Default `--max` is `20`.
+- `flib extract [--destdir DIR]`: extracts every cataloged book from zip archives under `FLIB_PATH` into destination tree `language/author/book.format`; emits created relative paths to stderr.
 - `flib by author`: lists all books grouped by formatted author name.
 - `flib by genre`: lists all books grouped by compiled-in genre display name.
 - `flib by language`: lists all books grouped by language.
 - `flib help`: prints usage.
 
-The database path comes from `FLIB_DB`, or defaults to `~/Documents/freeLib.sqlite`.
+The database path comes from `FLIB_DB`, or defaults to `~/Documents/freeLib.sqlite`. `extract` also requires `FLIB_PATH` (Flibusta library root with zip archives).
 
 ## Important Files
 
@@ -20,6 +21,7 @@ The database path comes from `FLIB_DB`, or defaults to `~/Documents/freeLib.sqli
 - `dbpath.go`: database path resolution and `~/` expansion for `FLIB_DB`.
 - `sqlite.go`: opens SQLite through `modernc.org/sqlite`; uses `mode=ro` for normal CLI reads.
 - `show.go`: `show` command implementation, YAML output model, progress output, author and genre lookup helpers.
+- `extract.go`: `extract` command implementation (`--destdir`, `FLIB_PATH` resolution, zip member extraction, collision suffixing, progress output).
 - `list.go`: `by author`, `by genre`, `by language`, grouping and sorting, legacy genre table/column compatibility.
 - `paths.go`: relative book path formatting as `archive:file.format` or `file.format`, omitting trailing dot when format is empty.
 - `genre.go`: genre display fallback and `go:generate` directive.
@@ -54,6 +56,7 @@ Run manually against a catalog:
 ```bash
 FLIB_DB="/path/to/freeLib.sqlite" ./flib show "asimov|foundation" --max 50
 FLIB_DB="/path/to/freeLib.sqlite" ./flib by genre
+FLIB_DB="/path/to/freeLib.sqlite" FLIB_PATH="/path/to/flibusta/root" ./flib extract --destdir ./out
 ```
 
 The current test suite passes with `go test ./...`.
@@ -70,6 +73,11 @@ Makefile review notes:
 - `show` output is YAML using `gopkg.in/yaml.v3` and the compact `bookOut` struct. It intentionally omits `library` and `lib_path`.
 - `show` scans all books ordered by `id_lib, id`, matches only against title, then enriches matched rows with one author and genre names.
 - `show --max 0` is accepted by argument parsing but currently returns the first matched row because the limit check happens after appending; treat changes here carefully and add tests if semantics are changed.
+- `extract` scans all books ordered by `id_lib, id`, resolves author via `authorForBook`, opens zip archive `filepath.Join(FLIB_PATH, archive)`, and reads member `file.format`.
+- `extract` destination path is `language/author/book.format` with sanitized path parts (`/` and `\` replaced by `_`, empty values -> `(unknown)`).
+- `extract` overwrites existing files.
+- If multiple rows map to one destination path in a run, later rows get `-<id>` suffixes before file extension.
+- `extract` prints each created relative path (to destination root) to stderr after successful write.
 - `by` output is plain text. Group headers look like `=== Author: NAME`, `=== Genre: NAME`, or `=== Language: LANG`; rows are tab-separated as `language author title relative_path`.
 - Group rows sort by language, then author, then title, using case-insensitive trimmed values and pushing blank values last.
 - Unknown author/language groups print `(unknown)`.

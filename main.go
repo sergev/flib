@@ -12,6 +12,7 @@ func usage() {
 
 Usage:
   flib show PATTERN [--max NUM]   Search books by title (regular expression). Default --max is 20.
+  flib extract [--destdir DIR]    Extract books into language/author/book.format tree.
   flib by author                   List all books grouped by author (tab-separated columns).
   flib by genre                    List all books grouped by genre.
   flib by language                 List all books grouped by language.
@@ -19,6 +20,7 @@ Usage:
 
 Environment:
   FLIB_DB   Path to freeLib.sqlite (default: ~/Documents/freeLib.sqlite)
+  FLIB_PATH Path to Flibusta library root with zip archives (required for extract)
 `)
 }
 
@@ -49,6 +51,13 @@ func run(args []string) error {
 		}
 		defer db.Close()
 		return cmdShow(db, args[1:])
+	case "extract":
+		db, err := openCatalog()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		return cmdExtract(db, args[1:])
 	case "by":
 		if len(args) < 2 {
 			usage()
