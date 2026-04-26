@@ -161,6 +161,8 @@ flib extract [--destdir DIR]
 - If `--destdir` is omitted, files are written under the current directory.
 - Existing output files are overwritten.
 - If multiple books map to the same output path, later books receive `-<id>` suffixes (for example: `book-123.fb2`).
+- If a source archive or member is missing, an error is printed and extraction continues.
+- At the end, extraction prints total count of missing files.
 - Each created relative path is printed to stderr for progress.
 
 ## Relative Path Format

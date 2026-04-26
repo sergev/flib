@@ -77,6 +77,8 @@ Makefile review notes:
 - `extract` destination path is `language/author/book.format` with sanitized path parts (`/` and `\` replaced by `_`, empty values -> `(unknown)`).
 - `extract` overwrites existing files.
 - If multiple rows map to one destination path in a run, later rows get `-<id>` suffixes before file extension.
+- If archive zip or member is missing, `extract` prints an error line, increments missing counter, and continues.
+- `extract` prints `missing files: <N>` at the end.
 - `extract` prints each created relative path (to destination root) to stderr after successful write.
 - `by` output is plain text. Group headers look like `=== Author: NAME`, `=== Genre: NAME`, or `=== Language: LANG`; rows are tab-separated as `language author title relative_path`.
 - Group rows sort by language, then author, then title, using case-insensitive trimmed values and pushing blank values last.

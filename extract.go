@@ -94,6 +94,7 @@ func cmdExtractWithIO(db *sql.DB, progress io.Writer, args []string) error {
 
 	seenDest := make(map[string]int)
 	archiveCache := make(map[string]*zip.ReadCloser)
+	missingCount := 0
 	defer func() {
 		for _, zr := range archiveCache {
 			_ = zr.Close()
@@ -113,11 +114,15 @@ func cmdExtractWithIO(db *sql.DB, progress io.Writer, args []string) error {
 		srcArchive := filepath.Join(libPath, r.archive)
 		zr, err := getOrOpenZip(archiveCache, srcArchive)
 		if err != nil {
-			return fmt.Errorf("open archive %s: %w", srcArchive, err)
+			missingCount++
+			fmt.Fprintf(progress, "missing archive: %s (%v)\n", filepath.ToSlash(r.archive), err)
+			continue
 		}
 		zf, err := findZipMember(zr, memberName)
 		if err != nil {
-			return fmt.Errorf("archive %s: %w", srcArchive, err)
+			missingCount++
+			fmt.Fprintf(progress, "missing member: %s in %s\n", memberName, filepath.ToSlash(r.archive))
+			continue
 		}
 
 		langPart := sanitizePathPart(r.language)
@@ -138,6 +143,7 @@ func cmdExtractWithIO(db *sql.DB, progress io.Writer, args []string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	fmt.Fprintf(progress, "missing files: %d\n", missingCount)
 	return nil
 }
 
