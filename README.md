@@ -9,8 +9,7 @@ The tool reads the same database used by freeLib and prints results to stdout. E
 Build:
 
 ```bash
-cd flib
-go build -o flib .
+make
 ```
 
 Show help:
@@ -23,6 +22,24 @@ Use a specific database:
 
 ```bash
 FLIB_DB="/path/to/freeLib.sqlite" ./flib show "dune"
+```
+
+## Development
+
+Common project tasks are available through the top-level `Makefile`:
+
+```bash
+make        # build the CLI
+make test   # run tests with gotestsum
+make cover  # run tests and print coverage summary
+make clean  # remove build artifacts
+```
+
+`make test` and `make cover` install `gotestsum` automatically if it is not already available. You can also use standard Go commands directly:
+
+```bash
+go test ./...
+go build -o flib .
 ```
 
 ## Database Location
