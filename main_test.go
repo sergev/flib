@@ -596,9 +596,9 @@ func TestSanitizePathPartAndUniqueRelPath(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	seen := map[string]int{}
-	first := uniqueRelPath("en/Ann/Same.fb2", 1, seen)
-	second := uniqueRelPath("en/Ann/Same.fb2", 2, seen)
-	third := uniqueRelPath("en/Ann/Same.fb2", 2, seen)
+	first := uniqueRelPath("en/Ann/Same.fb2", 1, seen, maxOutputNameBytes)
+	second := uniqueRelPath("en/Ann/Same.fb2", 2, seen, maxOutputNameBytes)
+	third := uniqueRelPath("en/Ann/Same.fb2", 2, seen, maxOutputNameBytes)
 	if first != "en/Ann/Same.fb2" {
 		t.Fatalf("first %q", first)
 	}
@@ -607,6 +607,17 @@ func TestSanitizePathPartAndUniqueRelPath(t *testing.T) {
 	}
 	if third != "en/Ann/Same-2-2.fb2" {
 		t.Fatalf("third %q", third)
+	}
+}
+
+func TestShortenFileNamePreservesExtension(t *testing.T) {
+	longName := strings.Repeat("a", 400) + ".fb2"
+	got := shortenFileName(longName, 120)
+	if len(got) > 120 {
+		t.Fatalf("still too long: %d", len(got))
+	}
+	if !strings.HasSuffix(got, ".fb2") {
+		t.Fatalf("extension lost: %q", got)
 	}
 }
 

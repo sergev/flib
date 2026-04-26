@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const maxOutputNameBytes = 240
+
 type extractRow struct {
 	id            int64
 	idLib         int64
@@ -128,8 +130,9 @@ func cmdExtractWithIO(db *sql.DB, progress io.Writer, args []string) error {
 		langPart := sanitizePathPart(r.language)
 		authorPart := sanitizePathPart(author)
 		bookPart := sanitizePathPart(bookRelPath("", r.title, r.format))
+		bookPart = shortenFileName(bookPart, maxOutputNameBytes)
 		relDest := filepath.Join(langPart, authorPart, bookPart)
-		relDest = uniqueRelPath(relDest, r.id, seenDest)
+		relDest = uniqueRelPath(relDest, r.id, seenDest, maxOutputNameBytes)
 		dstPath := filepath.Join(destAbs, relDest)
 
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
@@ -198,7 +201,7 @@ func sanitizePathPart(s string) string {
 	return s
 }
 
-func uniqueRelPath(rel string, id int64, seen map[string]int) string {
+func uniqueRelPath(rel string, id int64, seen map[string]int, nameMaxBytes int) string {
 	if seen[rel] == 0 {
 		seen[rel] = 1
 		return rel
@@ -207,16 +210,59 @@ func uniqueRelPath(rel string, id int64, seen map[string]int) string {
 	base := filepath.Base(rel)
 	ext := filepath.Ext(base)
 	name := strings.TrimSuffix(base, ext)
-	candidate := filepath.Join(dir, fmt.Sprintf("%s-%d%s", name, id, ext))
+	suffix := fmt.Sprintf("-%d", id)
+	candidateName := shortenNameWithSuffix(name, ext, suffix, nameMaxBytes)
+	candidate := filepath.Join(dir, candidateName)
 	if seen[candidate] == 0 {
 		seen[candidate] = 1
 		return candidate
 	}
 	for i := 2; ; i++ {
-		c := filepath.Join(dir, fmt.Sprintf("%s-%d-%d%s", name, id, i, ext))
+		sfx := fmt.Sprintf("-%d-%d", id, i)
+		candidateName := shortenNameWithSuffix(name, ext, sfx, nameMaxBytes)
+		c := filepath.Join(dir, candidateName)
 		if seen[c] == 0 {
 			seen[c] = 1
 			return c
 		}
 	}
+}
+
+func shortenNameWithSuffix(name, ext, suffix string, limitBytes int) string {
+	trimmedName := shortenByBytes(name, limitBytes-len(ext)-len(suffix))
+	return trimmedName + suffix + ext
+}
+
+func shortenFileName(fileName string, limitBytes int) string {
+	if len(fileName) <= limitBytes {
+		return fileName
+	}
+	ext := filepath.Ext(fileName)
+	name := strings.TrimSuffix(fileName, ext)
+	trimmedName := shortenByBytes(name, limitBytes-len(ext))
+	return trimmedName + ext
+}
+
+func shortenByBytes(s string, maxBytes int) string {
+	if maxBytes < 1 {
+		maxBytes = 1
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		rb := len(string(r))
+		if b.Len()+rb > maxBytes {
+			break
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 {
+		for _, r := range s {
+			return string(r)
+		}
+		return ""
+	}
+	return b.String()
 }
