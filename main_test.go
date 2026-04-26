@@ -803,6 +803,99 @@ INSERT INTO book_author(id_book, id_author, id_lib) VALUES (1, 10, 1), (2, 10, 1
 	}
 }
 
+func TestCmdExtractSkipsDeletedBooks(t *testing.T) {
+	tmp := t.TempDir()
+	libRoot := filepath.Join(tmp, "lib")
+	if err := os.MkdirAll(libRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(libRoot, "batch.zip")
+	if err := createZipFile(archivePath, map[string]string{
+		"active.fb2": "live-content",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(tmp, "extract_deleted.sqlite")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE lib (id INTEGER PRIMARY KEY, name TEXT, path TEXT);
+CREATE TABLE author (id INTEGER, name1 TEXT, name2 TEXT, name3 TEXT, id_lib INTEGER, PRIMARY KEY(id));
+CREATE TABLE book_author (id_book INTEGER, id_author INTEGER, id_lib INTEGER, PRIMARY KEY(id_book, id_author, id_lib));
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  star INTEGER,
+  language TEXT,
+  id_lib INTEGER,
+  file TEXT,
+  size INTEGER,
+  deleted BOOL,
+  date DATETIME,
+  format TEXT,
+  keys TEXT,
+  id_inlib INTEGER,
+  archive TEXT,
+  first_author_id INTEGER
+);
+INSERT INTO lib(id, name, path) VALUES (1, 'L1', '/lib');
+INSERT INTO author(id, name1, name2, name3, id_lib) VALUES (10, 'Doe', 'Jane', '', 1);
+INSERT INTO book(id, name, star, language, id_lib, file, size, deleted, date, format, keys, id_inlib, archive, first_author_id) VALUES
+  (1, 'DeletedMissingZip', 0, 'en', 1, 'x', 0, 1, '', 'fb2', '', 1, 'gone.zip', 10),
+  (2, 'DeletedMissingMember', 0, 'en', 1, 'nomember', 0, 1, '', 'fb2', '', 2, 'batch.zip', 10),
+  (3, 'OkBook', 0, 'en', 1, 'active', 0, 0, '', 'fb2', '', 3, 'batch.zip', 10);
+INSERT INTO book_author(id_book, id_author, id_lib) VALUES (1, 10, 1), (2, 10, 1), (3, 10, 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	dbRO, err := openSQLite(dbPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbRO.Close()
+
+	t.Setenv("FLIB_PATH", libRoot)
+	dest := filepath.Join(tmp, "out")
+	var progress bytes.Buffer
+	if err := cmdExtractWithIO(dbRO, &progress, []string{"--destdir", dest}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dest, "en", "Doe Jane", "OkBook.fb2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live-content" {
+		t.Fatalf("unexpected extracted content: %q", string(got))
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, "en", "Doe Jane", "DeletedMissingZip.fb2")); !os.IsNotExist(err) {
+		t.Fatalf("deleted book file should not exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "en", "Doe Jane", "DeletedMissingMember.fb2")); !os.IsNotExist(err) {
+		t.Fatalf("deleted book file should not exist: %v", err)
+	}
+
+	p := progress.String()
+	if strings.Contains(p, "gone.zip") {
+		t.Fatalf("deleted row should not trigger missing archive: %q", p)
+	}
+	if strings.Contains(p, "nomember.fb2") {
+		t.Fatalf("deleted row should not trigger missing member: %q", p)
+	}
+	if !strings.Contains(p, "en/Doe Jane/OkBook.fb2") {
+		t.Fatalf("expected created path line: %q", p)
+	}
+	if !strings.Contains(p, "missing files: 0") {
+		t.Fatalf("expected no missing files for skipped deleted rows: %q", p)
+	}
+}
+
 func createZipFile(path string, files map[string]string) error {
 	f, err := os.Create(path)
 	if err != nil {

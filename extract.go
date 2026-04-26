@@ -87,6 +87,7 @@ func cmdExtractWithIO(db *sql.DB, progress io.Writer, args []string) error {
 			COALESCE(b.archive, ''),
 			b.first_author_id
 		FROM book b
+		WHERE COALESCE(b.deleted, 0) = 0
 		ORDER BY b.id_lib ASC, b.id ASC
 	`)
 	if err != nil {
